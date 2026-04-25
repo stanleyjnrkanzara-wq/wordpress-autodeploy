@@ -1,0 +1,129 @@
+name: Deploy WordPress
+
+# Trigger on every push to main branch
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.6.0
+
+jobs:
+  # ─────────────────────────────────────
+  # JOB 1: TERRAFORM
+  # Builds the AWS infrastructure
+  # ─────────────────────────────────────
+  terraform:
+    name: Terraform — Build Infrastructure
+    runs-on: ubuntu-latest
+
+    outputs:
+      # Pass the server IP to the next job
+      server_ip: ${{ steps.tf_output.outputs.server_ip }}
+
+    steps:
+      # 1. Checkout your code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Set up AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 3. Install Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      # 4. Initialize Terraform
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      # 5. Show what will be created
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan
+
+      # 6. Actually create the infrastructure
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve
+
+      # 7. Get the server IP for Ansible
+      - name: Get Server IP
+        id: tf_output
+        working-directory: terraform
+        run: |
+          echo "server_ip=$(terraform output -raw server_ip)" >> $GITHUB_OUTPUT
+
+  # ─────────────────────────────────────
+  # JOB 2: ANSIBLE
+  # Installs WordPress on the server
+  # ─────────────────────────────────────
+  ansible:
+    name: Ansible — Install WordPress
+    runs-on: ubuntu-latest
+
+    # Wait for Terraform to finish first
+    needs: terraform
+
+    steps:
+      # 1. Checkout your code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Install Ansible
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+
+      # 3. Set up SSH key so Ansible can connect
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/wordpress-key.pem
+          chmod 400 ~/.ssh/wordpress-key.pem
+
+      # 4. Wait for EC2 to be ready
+      # (Sometimes EC2 needs 30-60 seconds to boot)
+      - name: Wait for EC2 to be ready
+        run: sleep 60
+
+      # 5. Create inventory with real server IP
+      - name: Create Ansible Inventory
+        run: |
+          echo "[wordpress]" > ansible/inventory.ini
+          echo "${{ needs.terraform.outputs.server_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/wordpress-key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> ansible/inventory.ini
+
+      # 6. Test SSH connection before running playbook
+      - name: Test SSH Connection
+        run: |
+          ssh -i ~/.ssh/wordpress-key.pem \
+            -o StrictHostKeyChecking=no \
+            ubuntu@${{ needs.terraform.outputs.server_ip }} \
+            "echo SSH connection successful!"
+
+      # 7. Run the Ansible playbook
+      - name: Run Ansible Playbook
+        run: |
+          ansible-playbook \
+            -i ansible/inventory.ini \
+            ansible/playbook.yml \
+            -v
+
+      # 8. Print the final URL
+      - name: WordPress is Live!
+        run: |
+          echo "========================================"
+          echo "✅ WordPress deployed successfully!"
+          echo "🌐 Visit: http://${{ needs.terraform.outputs.server_ip }}"
+          echo "========================================"
