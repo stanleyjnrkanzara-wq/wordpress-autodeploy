@@ -1,8 +1,6 @@
 terraform {
-  required_version = ">= 1.0"
+  required_version = ">= 1.6.0"
 
-  # Store terraform state in S3
-  # so GitHub Actions can access it
   backend "s3" {
     bucket = "wordpress-terraform-state-1777157410"
     key    = "wordpress/terraform.tfstate"
