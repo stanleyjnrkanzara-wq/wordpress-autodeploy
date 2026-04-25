@@ -1,0 +1,15 @@
+# MySQL Settings
+mysql_root_password: "Tinoonga02."
+mysql_db_name: "wordpress_db"
+mysql_user: "wordpress_user"
+mysql_password: "Tinoonga02."
+
+# WordPress Settings
+wordpress_url: "http://{{ ansible_host }}"
+wordpress_title: "My WordPress Site"
+wordpress_admin_user: "admin"
+wordpress_admin_password: "Tinoonga02."
+wordpress_admin_email: "admin@example.com"
+
+# PHP version
+php_version: "8.1"
